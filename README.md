@@ -14,7 +14,7 @@ OpenAI API account with credits (I added $5 to my account to use the image gener
 
 ### 1. Navigate to the project directory:
 
-cd vehicleImgGen
+cd Vehicle-Image-Generator
 
 ### 2. Install dependencies:
 
