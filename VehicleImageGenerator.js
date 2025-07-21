@@ -25,59 +25,28 @@ class VehicleImageGenerator {
         captured at a 3/4 front angle on a sleek, modern showroom floor with professional lighting. 
         The flawless paint reflects perfectly, showcasing chrome accents and tire details. The 
         background features a soft gray-to-white gradient for depth. High-resolution, showroom-quality, 
-        with no people, text, or logos aside from the manufacturer's badges.`;
+        with no people and no text.`;
     }
 
-    // Test environment variables
-    async testEnvironmentVariables() {
-        console.log(' Checking environment variables...');
-        const requiredVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'OPENAI_API_KEY'];
-        let allFound = true;
-    
-        for (const varName of requiredVars) {
-            if (process.env[varName]) {
-                console.log(`   ${varName}: Found`);
-            } else {
-                console.log(`   ${varName}: Missing`);
-                allFound = false;
-            }
-        }
-    
-        if (!allFound) {
-            console.log('\n Please check your .env file and ensure all required variables are set.');
-        }
-    
-        return allFound;
-    }
-
-    // Test database connection
-    async testConnection() {
+    async testConnections() {
         try {
-            console.log(' Testing database connection...');
-            const { data, error, count } = await this.supabase
-                .from('vehicle')
-                .select('*', { count: 'exact' })
-                .limit(1);
+            console.log(' Testing connections...');
             
-            if (error) throw error;
-            console.log(' Database connection successful!');
-            console.log(` Found ${count || 0} vehicle(s) in database`);
-            return true;
-        } catch (error) {
-            console.error(' Database connection failed:', error);
-            return false;
-        }
-    }
+            const requiredVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'OPENAI_API_KEY'];
+            const missingVars = requiredVars.filter(varName => !process.env[varName]);
+            
+            if (missingVars.length > 0) {
+                console.error(` Missing environment variables: ${missingVars.join(', ')}`);
+                return false;
+            }
 
-    // Test OpenAI connection
-    async testOpenAIConnection() {
-        try {
-            console.log(' Testing OpenAI connection...');
-            const response = await this.openai.models.list();
-            console.log(' OpenAI connection successful!');
+            await this.supabase.from('vehicle').select('*', { count: 'exact' }).limit(1);
+            await this.openai.models.list();
+            
+            console.log(' All connections successful!');
             return true;
         } catch (error) {
-            console.error(' OpenAI connection failed:', error);
+            console.error(' Connection failed:', error);
             return false;
         }
     }
@@ -105,100 +74,86 @@ class VehicleImageGenerator {
     }
 
     // Update vehicle record with generated image URL
-    async updateVehicleImage(vehicleId, imageUrl) {
+    async updateVehicleImage(vehicleId, imageUrl, forceUpdate = false) {
         try {
-            const { data, error } = await this.supabase
+            // Check if vehicle exists and has existing image
+            const { data: current } = await this.supabase
+                .from('vehicle')
+                .select('vehicletype, vehiclegraphic')
+                .eq('id', vehicleId)
+                .single();
+
+            if (!current) throw new Error(`Vehicle ID ${vehicleId} not found`);
+
+            if (current.vehiclegraphic && !forceUpdate) {
+                console.log(` Vehicle "${current.vehicletype}" already has an image. Use forceUpdate=true to override.`);
+                return false;
+            }
+
+            // Update the record
+            const { error } = await this.supabase
                 .from('vehicle')
                 .update({ 
                     vehiclegraphic: imageUrl,
                     updated_at: new Date().toISOString()
                 })
-                .eq('id', vehicleId)
-                .select();
+                .eq('id', vehicleId);
 
             if (error) throw error;
-            console.log(` Database updated for vehicle ID: ${vehicleId}`);
-            return data;
+
+            const action = current.vehiclegraphic ? 'Updated' : 'Added';
+            console.log(` ${action} image for: ${current.vehicletype}`);
+            return true;
         } catch (error) {
-            console.error(` Error updating vehicle ${vehicleId}:`, error);
+            console.error(`Error updating vehicle ${vehicleId}:`, error);
             throw error;
         }
     }
 
-    // Get all vehicle without images
-    async getVehiclesWithoutImages() {
-        try {
-            const { data, error } = await this.supabase
-                .from('vehicle')
-                .select('*')
-                .is('vehiclegraphic', null);
+    // Main processing method - handles both missing and existing images
+    async processVehicles(onlyMissing = true) {
+        if (!(await this.testConnections())) return;
 
-            if (error) throw error;
-            return data;
-        } catch (error) {
-            console.error(' Error fetching vehicle:', error);
-            throw error;
+        const vehicles = onlyMissing ? await this.getVehiclesWithoutImages() : await this.getAllVehicles();
+        const action = onlyMissing ? 'without images' : 'for regeneration';
+        
+        console.log(` Found ${vehicles.length} vehicles ${action}`);
+
+        if (vehicles.length === 0) {
+            console.log(onlyMissing ? ' All vehicles already have images!' : ' No vehicles found');
+            return;
         }
-    }
 
-    // Process all vehicle
-    async processAllVehicles() {
-        try {
-            console.log(' Starting vehicle processing...');
-            // Test environment variables first
-            const envOk = await this.testEnvironmentVariables();
-            if (!envOk) {
-                console.error(' Environment variable check failed.');
-                return;
-            }
-            // Test connections
-            const dbOk = await this.testConnection();
-            const openaiOk = await this.testOpenAIConnection();
-            
-            if (!dbOk || !openaiOk) {
-                console.error(' Connection tests failed. Please check your .env file.');
-                return;
-            }
-
-            const vehicles = await this.getVehiclesWithoutImages();
-            console.log(` Found ${vehicles.length} vehicle to process`);
-
-            if (vehicles.length === 0) {
-                console.log(' All vehicle already have images!');
-                return;
-            }
-
-            for (let i = 0; i < vehicles.length; i++) {
-                const vehicle = vehicles[i];
-                try {
-                    console.log(`\n[${i + 1}/${vehicles.length}] Processing: ${vehicle.vehicletype}`);
-                    
-                    // Generate image
-                    const imageUrl = await this.generateVehicleImage(vehicle.vehicletype);
-                    
-                    // Update database
-                    await this.updateVehicleImage(vehicle.id, imageUrl);
-                    
-                    console.log(` Successfully processed: ${vehicle.vehicletype}`);
-                    
-                    // Add delay to respect rate limits (2 seconds between requests)
-                    if (i < vehicles.length - 1) {
-                        console.log(' Waiting 2 seconds before next request...');
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                    }
-                    
-                } catch (error) {
-                    console.error(` Failed to process ${vehicle.vehicletype}:`, error);
-                    continue;
+        for (let i = 0; i < vehicles.length; i++) {
+            const vehicle = vehicles[i];
+            try {
+                console.log(`\n[${i + 1}/${vehicles.length}] Processing: ${vehicle.vehicletype}`);
+                
+                const imageUrl = await this.generateVehicleImage(vehicle.vehicletype);
+                await this.updateVehicleImage(vehicle.id, imageUrl, !onlyMissing);
+                
+                // Rate limiting delay
+                if (i < vehicles.length - 1) {
+                    console.log(' Waiting 2 seconds...');
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
+            } catch (error) {
+                console.error(` Failed to process ${vehicle.vehicletype}:`, error);
             }
-
-            console.log('\n All vehicle processed!');
-        } catch (error) {
-            console.error('Error in processAllVehicles:', error);
         }
+        
+        const completionMsg = onlyMissing ? 'missing images processed' : 'images regenerated';
+        console.log(`\n All ${completionMsg}!`);
     }
 
+    // Convenience methods
+    async processOnlyMissingImages() {
+        return await this.processVehicles(true);
+    }
+
+    async regenerateAllImages() {
+        return await this.processVehicles(false);
+    }
     // Get all vehicle with images
     async getAllVehicles() {
         try {
@@ -211,6 +166,21 @@ class VehicleImageGenerator {
             return data;
         } catch (error) {
             console.error('Error fetching all vehicle:', error);
+            throw error;
+        }
+    }
+    // Get all vehicle without images
+    async getVehiclesWithoutImages() {
+        try {
+            const { data, error } = await this.supabase
+                .from('vehicle')
+                .select('*')
+                .is('vehiclegraphic', null);
+
+            if (error) throw error;
+            return data;
+        } catch (error) {
+            console.error(' Error fetching vehicle:', error);
             throw error;
         }
     }
@@ -245,10 +215,17 @@ async function main() {
     const generator = new VehicleImageGenerator();
     
     try {
-        // Process all vehicle without images
-        await generator.processAllVehicles();
+        const vehiclesWithoutImages = await generator.getVehiclesWithoutImages();
         
-        // Display final results
+        if (vehiclesWithoutImages.length > 0) {
+            // Process only vehicles without images
+            await generator.processOnlyMissingImages();
+        } else {
+            // All vehicles have images, regenerate them
+            console.log('All vehicles have images. Regenerating all...');
+            await generator.regenerateAllImages();
+        }
+        
         await generator.displayResults();
         
     } catch (error) {
