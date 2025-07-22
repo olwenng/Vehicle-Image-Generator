@@ -28,3 +28,8 @@ Note: The .env file in this project already includes my Supabase and OpenAI API 
 
 If you want to test this yourself, you can replace the keys in .env with your own, make sure your vehiclegraphic column is still empty, and run the script to generate images.
 
+## Future Improvements
+- [ ] Add CLI prompt to control image regeneration instead of defaulting to auto-regenerate
+- [ ] Upload generated images to Supabase Storage for permanent hosting (OpenAI links expire after 24 hours)
+
+
